@@ -28,7 +28,7 @@
             align-items: center;
             padding: 20px;
             width: 95%;
-            max-width: 640px;
+            max-width: 640px; /* Increased max-width slightly */
         }
         canvas {
             display: block;
@@ -69,7 +69,7 @@
             padding: 30px 40px;
             border-radius: 8px;
             box-shadow: 0 0 25px rgba(255,255,255,0.1);
-            max-width: 400px;
+            max-width: 450px; /* Slightly wider for more text */
             width: 90%;
         }
         .modal h2 {
@@ -106,7 +106,7 @@
 
         #gameCanvas {
             width: 100%;
-            max-width: 600px;
+            max-width: 600px; /* Max canvas size */
             max-height: calc(100vh - 250px);
             aspect-ratio: 1 / 1;
         }
@@ -134,7 +134,7 @@
     <div id="startScreenModal" class="modal">
         <div class="modal-content">
             <h2>Welcome to Beyond 1 & 0!</h2>
-            <p>Use W, A, S, D keys to control the snake.<br>Collect '1' to grow, '0' to shrink.<br>Don't hit walls, yourself, or get too short!</p>
+            <p>Use W, A, S, D keys to control the snake.<br>Collect '1' to grow, '0' to shrink.<br>New numbers appear as you grow longer!<br>Don't hit walls, yourself, or get too short!</p>
             <p class="action-text font-bold text-lg">Press SPACE to Start</p>
         </div>
     </div>
@@ -148,13 +148,20 @@
         </div>
     </div>
 
+    <audio id="eatSound" src="eat.wav" preload="auto"></audio>
+    <audio id="hitSound" src="hit.wav" preload="auto"></audio>
+    <audio id="gameOverSound" src="gameover.wav" preload="auto"></audio>
+    <audio id="winSound" src="win.wav" preload="auto"></audio>
+    <audio id="levelUpSound" src="levelup.wav" preload="auto"></audio>
+
+
     <script>
         // Game elements
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const scoreValueDisplay = document.getElementById('scoreValue');
         const lengthValueDisplay = document.getElementById('lengthValue');
-        
+
         const startScreenModal = document.getElementById('startScreenModal');
         const gameOverModal = document.getElementById('gameOverModal');
         const finalScoreMessage = document.getElementById('finalScoreMessage');
@@ -162,23 +169,63 @@
         const gameOverTitle = document.getElementById('gameOverTitle');
         const restartButton = document.getElementById('restartButton');
 
+        // Audio elements
+        const eatSound = document.getElementById('eatSound');
+        const hitSound = document.getElementById('hitSound');
+        const gameOverSound = document.getElementById('gameOverSound');
+        const winSound = document.getElementById('winSound');
+        const levelUpSound = document.getElementById('levelUpSound');
+
+
         // Game settings
-        let cellSize = 20; 
-        const MIN_REQUIRED_TILES = 8; 
-        let tileCountX, tileCountY; 
+        let cellSize = 20;
+        const MIN_REQUIRED_TILES = 12; // Increased for more food items
+        let tileCountX, tileCountY;
         const NUM_FOOD_ONES = 3;
         const NUM_FOOD_ZEROS = 4;
+        const SPEED_INCREASE_LENGTHS = [10, 20, 30, 40, 50]; // Milestones for leveling up
+        const WIN_LENGTH = 55;
+        const WIN_SCORE = 555;
 
         // Game state variables
         let snake, foodItems, dx, dy, score, gameLoopTimeout, gameSpeed, minLength;
         let changingDirection = false;
-        let gameActive = false; 
-        let gameOver = false; 
+        let gameActive = false;
+        let gameOver = false;
         let gameOverReason = "";
+        let scoreMultiplier = 1;
+        let lastLengthMilestone = 0;
 
-        const SNAKE_COLOR = '#cccccc'; 
-        const FOOD_1_COLOR = '#ffffff'; 
-        const FOOD_0_COLOR = '#777777'; 
+        const SNAKE_COLOR = '#cccccc';
+        const FOOD_1_COLOR = '#ffffff';
+        const FOOD_0_COLOR = '#777777';
+        // Colors for new number blocks (can be expanded)
+        const FOOD_COLORS = {
+            '1': FOOD_1_COLOR,
+            '0': FOOD_0_COLOR,
+            '2': '#aaffaa', // Light green
+            '3': '#aaaaff', // Light blue
+            '4': '#ffaaaa', // Light red
+            '5': '#ffffaa', // Light yellow
+            '6': '#ffaaff'  // Light magenta
+        };
+        const FOOD_TEXT_COLORS = {
+            '1': '#000000',
+            '0': '#FFFFFF',
+            '2': '#000000',
+            '3': '#000000',
+            '4': '#000000',
+            '5': '#000000',
+            '6': '#000000'
+        };
+
+
+        function playSound(soundElement) {
+            if (soundElement) {
+                soundElement.currentTime = 0;
+                soundElement.play().catch(error => console.warn("Audio play failed:", error));
+            }
+        }
 
         function setupCanvas() {
             const gameCanvas = document.getElementById('gameCanvas');
@@ -186,7 +233,7 @@
             let currentCanvasWidth = parseFloat(computedStyle.width);
 
             if (isNaN(currentCanvasWidth) || currentCanvasWidth <= 0) {
-                currentCanvasWidth = MIN_REQUIRED_TILES * cellSize; 
+                currentCanvasWidth = MIN_REQUIRED_TILES * cellSize;
             }
 
             let numTiles = Math.floor(currentCanvasWidth / cellSize);
@@ -197,27 +244,27 @@
 
             const newCanvasSize = numTiles * cellSize;
             gameCanvas.width = newCanvasSize;
-            gameCanvas.height = newCanvasSize; 
+            gameCanvas.height = newCanvasSize;
 
             tileCountX = numTiles;
             tileCountY = numTiles;
         }
 
         function initializeGame() {
-            if (gameLoopTimeout) clearTimeout(gameLoopTimeout); 
+            if (gameLoopTimeout) clearTimeout(gameLoopTimeout);
 
-            setupCanvas(); 
+            setupCanvas();
 
             if (isNaN(tileCountX) || tileCountX < MIN_REQUIRED_TILES) {
-                gameOverModal.classList.remove('hidden'); 
+                gameOverModal.classList.remove('hidden');
                 startScreenModal.classList.add('hidden');
                 gameOverTitle.textContent = "Setup Error!";
                 finalScoreMessage.textContent = "Could not initialize game grid.";
                 gameOverReasonDisplay.textContent = `Grid size too small (${tileCountX} tiles).`;
-                return; 
+                return;
             }
-            
-            const headX = Math.floor(tileCountX / 2) + 1; 
+
+            const headX = Math.floor(tileCountX / 2) + 1;
             const body1X = headX - 1;
             const body2X = headX - 2;
             const startY = Math.floor(tileCountY / 2);
@@ -229,39 +276,42 @@
             ];
 
             if (snake.some(seg => seg.x < 0 || seg.x >= tileCountX || seg.y < 0 || seg.y >= tileCountY)) {
-                 gameOverModal.classList.remove('hidden');
-                 startScreenModal.classList.add('hidden');
-                 gameOverTitle.textContent = "Setup Error!";
-                 finalScoreMessage.textContent = "Snake placed out of bounds.";
-                 gameOverReasonDisplay.textContent = "Internal error during setup.";
-                 return;
+                gameOverModal.classList.remove('hidden');
+                startScreenModal.classList.add('hidden');
+                gameOverTitle.textContent = "Setup Error!";
+                finalScoreMessage.textContent = "Snake placed out of bounds.";
+                gameOverReasonDisplay.textContent = "Internal error during setup.";
+                return;
             }
 
-            dx = 1; 
+            dx = 1;
             dy = 0;
             score = 0;
-            minLength = 1; 
-            gameSpeed = 220; 
+            minLength = 1;
+            gameSpeed = 220;
             gameOver = false;
-            gameActive = false; 
+            gameActive = false;
             gameOverReason = "";
             changingDirection = false;
+            scoreMultiplier = 1;
+            lastLengthMilestone = 0;
+
 
             scoreValueDisplay.textContent = score;
             lengthValueDisplay.textContent = snake.length;
-            
+
             gameOverModal.classList.add('hidden');
-            startScreenModal.classList.remove('hidden'); 
+            startScreenModal.classList.remove('hidden');
 
-            initializeFoodItems(); 
+            initializeBaseFoodItems(); // Only spawn '1's and '0's initially
 
-            clearCanvas(); 
-            drawSnake();   
-            drawAllFood(); 
+            clearCanvas();
+            drawSnake();
+            drawAllFood();
         }
 
-        function initializeFoodItems() {
-            foodItems = [];
+        function initializeBaseFoodItems() {
+            foodItems = []; // Clear existing food
             for (let i = 0; i < NUM_FOOD_ONES; i++) {
                 spawnSpecificFood('1');
             }
@@ -276,14 +326,15 @@
             }
             let foodX, foodY;
             let attempts = 0;
-            const maxAttempts = tileCountX * tileCountY; 
+            const maxAttempts = tileCountX * tileCountY;
 
             do {
                 foodX = Math.floor(Math.random() * tileCountX);
                 foodY = Math.floor(Math.random() * tileCountY);
                 attempts++;
-                if (attempts > maxAttempts) {
-                    return; 
+                if (attempts > maxAttempts * 2) { // Increased max attempts slightly
+                    // console.warn(`Spawn: Could not find empty spot for food type ${type} after ${attempts} attempts.`);
+                    return; // Avoid infinite loop if board is extremely full
                 }
             } while (
                 (snake && snake.some(segment => segment.x === foodX && segment.y === foodY)) ||
@@ -295,47 +346,47 @@
 
 
         function startGame() {
-            if (gameActive || gameOver) return; 
+            if (gameActive || gameOver) return;
             gameActive = true;
-            gameOver = false; 
+            gameOver = false;
             startScreenModal.classList.add('hidden');
-            gameOverModal.classList.add('hidden'); 
-            
-            dx = 1; 
-            dy = 0;
-            gameSpeed = 220; 
+            gameOverModal.classList.add('hidden');
 
-            if (foodItems.length < (NUM_FOOD_ONES + NUM_FOOD_ZEROS)) {
-                initializeFoodItems(); 
-            }
+            dx = 1;
+            dy = 0;
+            gameSpeed = 220;
+            scoreMultiplier = 1;
+            lastLengthMilestone = 0;
+
+            initializeBaseFoodItems(); // Reset food to only base items
 
             if (gameLoopTimeout) clearTimeout(gameLoopTimeout);
             gameLoop();
         }
 
         function gameLoop() {
-            if (!gameActive || gameOver) { 
+            if (!gameActive || gameOver) {
                 if (gameOver) {
                     showGameOverScreen();
                 }
                 return;
             }
-            changingDirection = false; 
+            changingDirection = false;
             gameLoopTimeout = setTimeout(() => {
                 clearCanvas();
                 drawAllFood();
-                moveSnake(); 
-                if (gameOver) { 
+                moveSnake();
+                if (gameOver) {
                     showGameOverScreen();
                     return;
                 }
                 drawSnake();
-                gameLoop(); 
+                gameLoop();
             }, gameSpeed);
         }
 
         function clearCanvas() {
-            ctx.fillStyle = '#000000'; 
+            ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
@@ -346,17 +397,17 @@
                 ctx.fillRect(segment.x * cellSize, segment.y * cellSize, cellSize - 1 , cellSize - 1);
             });
         }
-        
+
         function drawAllFood() {
             if (!foodItems) return;
             foodItems.forEach(item => {
-                ctx.fillStyle = item.type === '1' ? FOOD_1_COLOR : FOOD_0_COLOR;
-                ctx.fillRect(item.x * cellSize, item.y * cellSize, cellSize -1 , cellSize -1); 
+                ctx.fillStyle = FOOD_COLORS[item.type] || FOOD_1_COLOR; // Fallback to '1' color
+                ctx.fillRect(item.x * cellSize, item.y * cellSize, cellSize -1 , cellSize -1);
 
-                ctx.font = `${cellSize * 0.75}px 'Courier New', monospace`; 
+                ctx.font = `${cellSize * 0.75}px 'Courier New', monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillStyle = item.type === '1' ? '#000000' : '#FFFFFF'; 
+                ctx.fillStyle = FOOD_TEXT_COLORS[item.type] || '#000000'; // Fallback text color
                 ctx.fillText(item.type, item.x * cellSize + cellSize / 2, item.y * cellSize + cellSize / 2 + 1);
             });
         }
@@ -368,17 +419,18 @@
             const head = { x: snake[0].x + dx, y: snake[0].y + dy };
 
             if (head.x < 0 || head.x >= tileCountX || head.y < 0 || head.y >= tileCountY) {
-                gameOver = true; gameOverReason = "You hit a wall!"; return;
+                gameOver = true; gameOverReason = "You hit a wall!"; playSound(hitSound); return;
             }
 
             for (let i = 1; i < snake.length; i++) {
                 if (snake[i].x === head.x && snake[i].y === head.y) {
-                    gameOver = true; gameOverReason = "You bit yourself!"; return;
+                    gameOver = true; gameOverReason = "You bit yourself!"; playSound(hitSound); return;
                 }
             }
 
-            snake.unshift(head); 
+            snake.unshift(head); // Tentatively add head
 
+            let foodConsumedThisTurn = false;
             let eatenFoodIndex = -1;
             for (let i = 0; i < foodItems.length; i++) {
                 if (head.x === foodItems[i].x && head.y === foodItems[i].y) {
@@ -388,44 +440,86 @@
             }
 
             if (eatenFoodIndex !== -1) {
-                const eatenItem = foodItems[eatenFoodIndex];
-                score++;
-                scoreValueDisplay.textContent = score;
+                foodConsumedThisTurn = true;
+                const eatenItem = foodItems.splice(eatenFoodIndex, 1)[0];
+                playSound(eatSound);
 
-                if (eatenItem.type === '1') {
-                    // Snake grows
-                } else { 
-                    if (snake.length > 1) snake.pop(); 
+                if (eatenItem.type !== '0') { // Growth item (e.g., '1', '2', '3', ...)
+                    const growthValue = parseInt(eatenItem.type);
+                    if (isNaN(growthValue) || growthValue < 1) { // Safety check
+                         // console.error("Invalid growth value:", eatenItem.type);
+                    } else {
+                        score += growthValue * scoreMultiplier;
+
+                        // Snake effectively grew by 1 due to unshift and no pop yet.
+                        // Add (growthValue - 1) more segments if growthValue > 1.
+                        if (growthValue > 1) {
+                            const tail = snake[snake.length - 1]; // Segment that would be the tail
+                            for (let i = 0; i < growthValue - 1; i++) {
+                                snake.push({ x: tail.x, y: tail.y }); // Add copies
+                            }
+                        }
+                    }
+
+                    // Level progression logic (introduce new food types & speed up)
+                    const currentLength = snake.length;
+                    for (const milestone of SPEED_INCREASE_LENGTHS) {
+                        if (currentLength >= milestone && milestone > lastLengthMilestone) {
+                            lastLengthMilestone = milestone;
+                            
+                            gameSpeed = Math.max(60, gameSpeed - 20); 
+                            scoreMultiplier *= 2;
+                            playSound(levelUpSound);
+                            // console.log(`Level up! Length: ${currentLength}, New Speed: ${gameSpeed}, New Multiplier: ${scoreMultiplier}, Milestone: ${milestone}`);
+
+                            const newFoodTypeNumber = (milestone / 10) + 1; 
+                            const quantityOfNewFood = newFoodTypeNumber;   
+
+                            // console.log(`Introducing ${quantityOfNewFood} blocks of type '${newFoodTypeNumber}'`);
+                            for (let k = 0; k < quantityOfNewFood; k++) {
+                                spawnSpecificFood(String(newFoodTypeNumber)); 
+                            }
+                            break; // Process only one milestone advancement per growth event.
+                        }
+                    }
+
+                } else { // Shrink item ('0')
+                    // Head was added. Pop it, then pop original tail.
                     if (snake.length > 0) snake.pop(); 
-                    
+                    if (snake.length > 0) snake.pop(); 
+
                     if (snake.length < minLength) {
-                        gameOver = true; gameOverReason = "Your snake became too short!";
-                        lengthValueDisplay.textContent = Math.max(0, snake.length); 
-                        return; 
+                        gameOver = true; gameOverReason = "Your snake became too short!"; playSound(hitSound); return;
                     }
                 }
-                
-                foodItems.splice(eatenFoodIndex, 1); 
-                spawnSpecificFood(eatenItem.type);    
-
-                if (gameSpeed > 100) gameSpeed -= 1; 
-
-            } else {
-                snake.pop(); 
+                spawnSpecificFood(eatenItem.type); // Replenish the eaten food type
+                scoreValueDisplay.textContent = score;
             }
+
+            if (!foodConsumedThisTurn) { // If no food was eaten
+                snake.pop();
+            }
+
             lengthValueDisplay.textContent = snake.length;
+
+            // Check for win condition AFTER updating length and score
+            if (snake.length >= WIN_LENGTH || score >= WIN_SCORE) {
+                gameOver = true; 
+                gameActive = false; 
+                return; 
+            }
         }
 
         function handleKeyPress(event) {
-            if (!gameActive) { 
+            if (!gameActive) {
                 if (event.code === 'Space') {
-                    event.preventDefault(); 
+                    event.preventDefault();
                     startGame();
                 }
                 return;
             }
 
-            if (changingDirection || gameOver) return; 
+            if (changingDirection || gameOver) return;
 
             const keyPressed = event.key.toLowerCase();
             const goingUp = dy === -1;
@@ -445,29 +539,36 @@
         }
 
         function showGameOverScreen() {
-            if (gameLoopTimeout) clearTimeout(gameLoopTimeout); 
+            if (gameLoopTimeout) clearTimeout(gameLoopTimeout);
             gameActive = false; 
-            gameOver = true;    
-            
-            gameOverTitle.textContent = "Game Over!"; 
+
+            if (snake.length >= WIN_LENGTH || score >= WIN_SCORE) {
+                gameOverTitle.textContent = "You Won!";
+                gameOverReason = `Reached target! Length: ${snake.length}, Score: ${score}`;
+                playSound(winSound);
+            } else {
+                gameOverTitle.textContent = "Game Over!";
+                playSound(gameOverSound);
+            }
+
             finalScoreMessage.textContent = `Your final score: ${score}`;
-            gameOverReasonDisplay.textContent = `Reason: ${gameOverReason}`;
-            
-            startScreenModal.classList.add('hidden'); 
-            gameOverModal.classList.remove('hidden'); 
+            gameOverReasonDisplay.textContent = `Reason: ${gameOverReason}`; 
+
+            startScreenModal.classList.add('hidden');
+            gameOverModal.classList.remove('hidden');
         }
 
         document.addEventListener('keydown', handleKeyPress);
         restartButton.addEventListener('click', () => {
-            gameOverModal.classList.add('hidden'); 
-            initializeGame(); 
+            gameOverModal.classList.add('hidden');
+            initializeGame();
         });
-        
+
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
-                initializeGame(); 
+                initializeGame();
             }, 250);
         });
         initializeGame();
